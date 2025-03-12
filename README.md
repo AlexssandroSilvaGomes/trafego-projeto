@@ -13,6 +13,7 @@ Este programa em Python calcula a melhor rota entre dois endereços na cidade de
 - **random**: Geração de números aleatórios.
 - **shapely**: Manipulação de objetos geométricos (linhas, polígonos, etc.).
 - **os**: Interação com o sistema operacional (verificação de arquivos).
+- **flask**: Framework web para criar a interface do usuário.
 
 ## Passo a Passo do Programa
 
@@ -78,10 +79,15 @@ Define a função `endereco_para_coordenada` para converter endereços em coorde
 ```python
 def endereco_para_coordenada(endereco):
     geolocator = Nominatim(user_agent="sistema_trafego")
-    location = geolocator.geocode(endereco)
-    if location:
-        return location.latitude, location.longitude
-    else:
+    try:
+        location = geolocator.geocode(endereco, timeout=10)
+        if location:
+            return location.latitude, location.longitude
+        else:
+            print(f"Erro: Não foi possível encontrar o endereço '{endereco}'.")
+            return None, None
+    except GeocoderTimedOut:
+        print(f"Erro: Tempo esgotado ao tentar geocodificar o endereço '{endereco}'.")
         return None, None
 ```
 
@@ -97,13 +103,14 @@ def melhor_rota(G, origem, destino):
     if origem is None or destino is None:
         print("Erro: Não foi possível obter as coordenadas de origem ou destino.")
         return []
-    origem_node = ox.distance.nearest_nodes(G, X=origem[1], Y=origem[0])
-    destino_node = ox.distance.nearest_nodes(G, X=destino[1], Y=destino[0])
-    if origem_node is None or destino_node is None:
-        print("Erro: Não foi possível encontrar os nós mais próximos no grafo.")
+    try:
+        origem_node = ox.distance.nearest_nodes(G, X=origem[1], Y=origem[0])
+        destino_node = ox.distance.nearest_nodes(G, X=destino[1], Y=destino[0])
+        caminho = nx.astar_path(G, source=origem_node, target=destino_node, weight='weight')
+        return caminho
+    except Exception as e:
+        print(f"Erro ao calcular a melhor rota: {e}")
         return []
-    caminho = nx.astar_path(G, source=origem_node, target=destino_node, weight='weight')
-    return caminho
 ```
 
 ### 8. Visualização do Congestionamento no Mapa
@@ -141,7 +148,7 @@ def pintar_congestionamento(G, mapa, caminho):
         folium.PolyLine(
             [(coord[1], coord[0]) for coord in coords],
             color=cor,
-            weight=2,
+            weight=4,
             opacity=0.5,
             tooltip=tooltip
         ).add_to(mapa)
@@ -170,12 +177,11 @@ def exibir_rota_no_mapa(G, caminho, origem, destino):
     folium.PolyLine(
         rota_coords,
         color='blue',
-        weight=5,
+        weight=7,
         opacity=1,
         tooltip=tooltip_rota
     ).add_to(mapa)
-    mapa.save("rota_completo_sao_paulo.html")
-    print("Mapa salvo como 'rota_completo_sao_paulo.html'.")
+    return mapa._repr_html_()
 ```
 
 ### 10. Interação com o Usuário
@@ -187,49 +193,70 @@ Define a função `sistema_trafego` para interagir com o usuário.
 - Calcula a melhor rota e exibe o mapa resultante.
 
 ```python
-def sistema_trafego():
-    origem_endereco = input("Digite o endereço de origem: ")
-    destino_endereco = input("Digite o endereço de destino: ")
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/rota', methods=['POST'])
+def rota():
+    origem_endereco = request.form['origem']
+    destino_endereco = request.form['destino']
     origem = endereco_para_coordenada(origem_endereco)
     destino = endereco_para_coordenada(destino_endereco)
     if origem and destino:
         caminho = melhor_rota(G, origem, destino)
-        exibir_rota_no_mapa(G, caminho, origem, destino)
-        print("Rota calculada e salva no mapa.")
+        mapa_html = exibir_rota_no_mapa(G, caminho, origem, destino)
+        return mapa_html
     else:
-        print("Erro ao obter as coordenadas de um ou ambos os endereços.")
-```
+        return jsonify({"error": "Erro ao obter as coordenadas de um ou ambos os endereços."}), 400
 
-### 11. Execução do Programa
-
-O programa é executado chamando a função `sistema_trafego()`.
-
-```python
-sistema_trafego()
+if __name__ == '__main__':
+    app.run(debug=True)
 ```
 
 ## Como Utilizar o Programa
+### 1. Instalação das Dependências
+Certifique-se de instalar todas as bibliotecas necessárias. Você pode fazer isso utilizando o arquivo `requirements.txt` fornecido. Execute o seguinte comando no terminal:
+```python
+pip install -r requirements.txt
+```
+### 2. Estrutura do Projeto
+Certifique-se de que a estrutura do seu projeto está correta:
+```python
+trafego-projeto/
+│
+├── templates/
+│   └── index.html
+│
+├── trafego.py
+├── requirements.txt
+```
+### 3. Execução do Servidor
+Para executar o servidor, abra o terminal e navegue até o diretório do projeto. Em seguida, execute o seguinte comando:
+```python
+python trafego.py
+```
+### 4. Acessando a Aplicação
+Abra o seu navegador e acesse `http://127.0.0.1:5000/`. Você verá um formulário para inserir os endereços de origem e destino. Ao enviar o formulário, o mapa será atualizado dinamicamente com a rota calculada.
 
-1. **Instalação das Dependências**: Certifique-se de instalar todas as bibliotecas necessárias, listadas no `requirements.txt`.
-
-2. **Execução**: Execute o script Python em um ambiente adequado.
-
-3. **Interação**: Insira os endereços de origem e destino quando solicitado.
-
-4. **Resultado**: O programa gera um arquivo `rota_completo_sao_paulo.html` que pode ser aberto em um navegador web para visualizar o mapa interativo.
+### 5. Visualizando o Mapa
+O mapa interativo será exibido na página, mostrando a rota sugerida e as ruas próximas coloridas de acordo com o nível de congestionamento.
 
 ## Personalizações Possíveis
-
-- **Tamanho do Buffer**: Ajuste o valor em `rota_buffer = rota_geom.buffer(0.01)` para aumentar ou diminuir a área de ruas próximas consideradas.
-
-- **Geração de Congestionamento**: Substitua a geração aleatória por dados reais de congestionamento, se disponíveis.
-
-- **Estilo do Mapa**: Personalize cores, opacidades e estilos das linhas e marcadores.
-
-- **Outras Cidades**: Modifique a variável `cidade` para utilizar o programa em outras localidades.
+- *Tamanho do Buffer*: Ajuste o valor em `rota_buffer = rota_geom.buffer(0.01)` para aumentar ou diminuir a área de ruas próximas consideradas.
+- *Geração de Congestionamento*: Substitua a geração aleatória por dados reais de congestionamento, se disponíveis.
+- *Estilo do Mapa*: Personalize cores, opacidades e estilos das linhas e marcadores.
+- *Outras Cidades*: Modifique a variável `cidade` para utilizar o programa em outras localidades.
 
 ## Conclusão
-
 Este programa integra diversas bibliotecas para oferecer uma solução que calcula rotas otimizadas com base no congestionamento das vias, proporcionando uma visualização interativa e informativa para o usuário.
 
----
+
+### Executando o Servidor
+
+Para executar o servidor, abra o terminal e execute o seguinte comando:
+
+```sh
+python trafego.py
+```
+Agora, você pode acessar `http://127.0.0.1:5000/` no seu navegador, onde você verá um formulário para inserir os endereços de origem e destino. Ao enviar o formulário, o mapa será atualizado dinamicamente com a rota calculada.

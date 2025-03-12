@@ -1,11 +1,15 @@
 import osmnx as ox
 import networkx as nx
 from geopy.geocoders import Nominatim
+from geopy.exc import GeocoderTimedOut
 import folium
 import random
 from shapely.geometry import LineString
 from shapely.ops import linemerge
 import os
+from flask import Flask, request, render_template, jsonify
+
+app = Flask(__name__)
 
 graph_filename = 'sao_paulo_graph.graphml'
 
@@ -25,25 +29,32 @@ edges['weight'] = edges['congestionamento']
 edge_weights = edges.set_index(['u', 'v', 'key'])['weight'].to_dict()
 nx.set_edge_attributes(G, edge_weights, 'weight')
 
+geolocator = Nominatim(user_agent="sistema_trafego")
+
 def endereco_para_coordenada(endereco):
-    geolocator = Nominatim(user_agent="sistema_trafego")
-    location = geolocator.geocode(endereco)
-    if location:
-        return location.latitude, location.longitude
-    else:
+    try:
+        location = geolocator.geocode(endereco, timeout=10)
+        if location:
+            return location.latitude, location.longitude
+        else:
+            print(f"Erro: Não foi possível encontrar o endereço '{endereco}'.")
+            return None, None
+    except GeocoderTimedOut:
+        print(f"Erro: Tempo esgotado ao tentar geocodificar o endereço '{endereco}'.")
         return None, None
 
 def melhor_rota(G, origem, destino):
     if origem is None or destino is None:
         print("Erro: Não foi possível obter as coordenadas de origem ou destino.")
         return []
-    origem_node = ox.distance.nearest_nodes(G, X=origem[1], Y=origem[0])
-    destino_node = ox.distance.nearest_nodes(G, X=destino[1], Y=destino[0])
-    if origem_node is None or destino_node is None:
-        print("Erro: Não foi possível encontrar os nós mais próximos no grafo.")
+    try:
+        origem_node = ox.distance.nearest_nodes(G, X=origem[1], Y=origem[0])
+        destino_node = ox.distance.nearest_nodes(G, X=destino[1], Y=destino[0])
+        caminho = nx.astar_path(G, source=origem_node, target=destino_node, weight='weight')
+        return caminho
+    except Exception as e:
+        print(f"Erro ao calcular a melhor rota: {e}")
         return []
-    caminho = nx.astar_path(G, source=origem_node, target=destino_node, weight='weight')
-    return caminho
 
 def pintar_congestionamento(G, mapa, caminho):
     rota_linhas = []
@@ -70,7 +81,7 @@ def pintar_congestionamento(G, mapa, caminho):
         folium.PolyLine(
             [(coord[1], coord[0]) for coord in coords],
             color=cor,
-            weight=2,
+            weight=4,
             opacity=0.5,
             tooltip=tooltip
         ).add_to(mapa)
@@ -88,23 +99,28 @@ def exibir_rota_no_mapa(G, caminho, origem, destino):
     folium.PolyLine(
         rota_coords,
         color='blue',
-        weight=5,
+        weight=7,
         opacity=1,
         tooltip=tooltip_rota
     ).add_to(mapa)
-    mapa.save("rota_completo_sao_paulo.html")
-    print("Mapa salvo como 'rota_completo_sao_paulo.html'.")
+    return mapa._repr_html_()
 
-def sistema_trafego():
-    origem_endereco = input("Digite o endereço de origem: ")
-    destino_endereco = input("Digite o endereço de destino: ")
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/rota', methods=['POST'])
+def rota():
+    origem_endereco = request.form['origem']
+    destino_endereco = request.form['destino']
     origem = endereco_para_coordenada(origem_endereco)
     destino = endereco_para_coordenada(destino_endereco)
     if origem and destino:
         caminho = melhor_rota(G, origem, destino)
-        exibir_rota_no_mapa(G, caminho, origem, destino)
-        print("Rota calculada e salva no mapa.")
+        mapa_html = exibir_rota_no_mapa(G, caminho, origem, destino)
+        return mapa_html
     else:
-        print("Erro ao obter as coordenadas de um ou ambos os endereços.")
+        return jsonify({"error": "Erro ao obter as coordenadas de um ou ambos os endereços."}), 400
 
-sistema_trafego()
+if __name__ == '__main__':
+    app.run(debug=True)

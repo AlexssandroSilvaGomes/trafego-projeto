@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Tráfego</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/css/bootstrap.min.css">
+    <style>
+        #map {
+            height: 600px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1>Sistema de Tráfego</h1>
+        <form id="rotaForm">
+            <div class="mb-3">
+                <label for="origem" class="form-label">Endereço de Origem</label>
+                <input type="text" class="form-control" id="origem" name="origem" required>
+            </div>
+            <div class="mb-3">
+                <label for="destino" class="form-label">Endereço de Destino</label>
+                <input type="text" class="form-control" id="destino" name="destino" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Calcular Rota</button>
+        </form>
+        <div id="map" class="mt-4"></div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            $('#rotaForm').on('submit', function(event) {
+                event.preventDefault();
+                $.ajax({
+                    url: '/rota',
+                    method: 'POST',
+                    data: $(this).serialize(),
+                    success: function(response) {
+                        $('#map').html(response);
+                    },
+                    error: function() {
+                        alert('Erro ao calcular a rota.');
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>
