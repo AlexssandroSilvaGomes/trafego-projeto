@@ -1,4 +1,4 @@
-# Descrição Detalhada do Programa de Tráfego Urbano
+# Projeto de Tráfego Urbano
 
 ## Introdução
 
