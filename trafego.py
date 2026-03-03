@@ -1,13 +1,14 @@
 import osmnx as ox
 import networkx as nx
 from geopy.geocoders import Nominatim
-from geopy.exc import GeocoderTimedOut
+from geopy.exc import GeocoderTimedOut, GeocoderUnavailable, GeocoderServiceError
 import folium
 import random
 from shapely.geometry import LineString
 from shapely.ops import linemerge
 import os
 from flask import Flask, request, render_template, jsonify
+import time
 
 app = Flask(__name__)
 
@@ -22,6 +23,14 @@ else:
     ox.save_graphml(G, graph_filename)
     print("Grafo baixado e salvo em cache.")
 
+# mantém apenas o maior componente conectado
+if nx.is_directed(G):
+    maior_comp = max(nx.weakly_connected_components(G), key=len)
+else:
+    maior_comp = max(nx.connected_components(G), key=len)
+G = G.subgraph(maior_comp).copy()
+print(f"Grafo filtrado para maior componente: {len(G.nodes)} nós, {len(G.edges)} arestas.")
+
 edges = ox.graph_to_gdfs(G, nodes=False, edges=True)
 edges.reset_index(inplace=True)
 edges['congestionamento'] = [random.randint(0, 100) for _ in range(len(edges))]
@@ -29,31 +38,63 @@ edges['weight'] = edges['congestionamento']
 edge_weights = edges.set_index(['u', 'v', 'key'])['weight'].to_dict()
 nx.set_edge_attributes(G, edge_weights, 'weight')
 
-geolocator = Nominatim(user_agent="sistema_trafego")
+geolocator = Nominatim(user_agent="sistema_trafego_alexssandro_2026")
 
 def endereco_para_coordenada(endereco):
-    try:
-        location = geolocator.geocode(endereco, timeout=10)
-        if location:
-            return location.latitude, location.longitude
-        else:
-            print(f"Erro: Não foi possível encontrar o endereço '{endereco}'.")
-            return None, None
-    except GeocoderTimedOut:
-        print(f"Erro: Tempo esgotado ao tentar geocodificar o endereço '{endereco}'.")
-        return None, None
+    if "são paulo" not in endereco.lower():
+        endereco = f"{endereco}, São Paulo, SP, Brasil"
+
+    for tentativa in range(3):
+        try:
+            location = geolocator.geocode(
+                endereco,
+                timeout=12,
+                exactly_one=True,
+                country_codes="br",
+                addressdetails=True
+            )
+            if location:
+                return (location.latitude, location.longitude)
+
+            print(f"Geocoding sem resultado: '{endereco}'")
+            return None
+
+        except (GeocoderTimedOut, GeocoderUnavailable, GeocoderServiceError) as e:
+            print(f"Geocoding falhou (tentativa {tentativa + 1}/3): {e}")
+            time.sleep(1.2 * (tentativa + 1))
+
+    return None
 
 def melhor_rota(G, origem, destino):
     if origem is None or destino is None:
-        print("Erro: Não foi possível obter as coordenadas de origem ou destino.")
+        print("Erro: origem/destino inválidos.")
         return []
+
     try:
         origem_node = ox.distance.nearest_nodes(G, X=origem[1], Y=origem[0])
         destino_node = ox.distance.nearest_nodes(G, X=destino[1], Y=destino[0])
-        caminho = nx.astar_path(G, source=origem_node, target=destino_node, weight='weight')
-        return caminho
+        print(f"origem_node={origem_node}, destino_node={destino_node}")
+
+        # 1) tenta direcionado
+        try:
+            return nx.shortest_path(
+                G, source=origem_node, target=destino_node, weight="weight", method="dijkstra"
+            )
+        except nx.NetworkXNoPath:
+            print("Sem caminho no grafo direcionado.")
+
+        # 2) fallback não direcionado
+        try:
+            G_u = G.to_undirected()
+            return nx.shortest_path(
+                G_u, source=origem_node, target=destino_node, weight="weight", method="dijkstra"
+            )
+        except nx.NetworkXNoPath:
+            print("Sem caminho também no grafo não direcionado.")
+            return []
+
     except Exception as e:
-        print(f"Erro ao calcular a melhor rota: {e}")
+        print(f"Erro ao calcular a melhor rota: {type(e).__name__} - {e}")
         return []
 
 def pintar_congestionamento(G, mapa, caminho):
@@ -111,16 +152,31 @@ def index():
 
 @app.route('/rota', methods=['POST'])
 def rota():
-    origem_endereco = request.form['origem']
-    destino_endereco = request.form['destino']
+    origem_endereco = request.form.get('origem', '').strip()
+    destino_endereco = request.form.get('destino', '').strip()
+
+    if not origem_endereco or not destino_endereco:
+        return jsonify({"error": "Informe origem e destino."}), 400
+
     origem = endereco_para_coordenada(origem_endereco)
     destino = endereco_para_coordenada(destino_endereco)
-    if origem and destino:
-        caminho = melhor_rota(G, origem, destino)
-        mapa_html = exibir_rota_no_mapa(G, caminho, origem, destino)
-        return mapa_html
-    else:
-        return jsonify({"error": "Erro ao obter as coordenadas de um ou ambos os endereços."}), 400
+
+    if origem is None or destino is None:
+        return jsonify({
+            "error": "Falha ao localizar endereço (Nominatim). Tente novamente em alguns segundos e use: rua, número, bairro."
+        }), 400
+
+    caminho = melhor_rota(G, origem, destino)
+    if not caminho:
+        return jsonify({
+            "error": "Endereços localizados, mas não foi possível calcular rota entre os pontos."
+        }), 404
+
+    mapa_html = exibir_rota_no_mapa(G, caminho, origem, destino)
+    if not mapa_html:
+        return jsonify({"error": "Não foi possível gerar o mapa da rota."}), 500
+
+    return mapa_html
 
 if __name__ == '__main__':
     app.run(debug=True)

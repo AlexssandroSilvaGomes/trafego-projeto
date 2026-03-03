@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -12,6 +13,7 @@
         }
     </style>
 </head>
+
 <body>
     <div class="container mt-4">
         <h1>Sistema de Tráfego</h1>
@@ -32,22 +34,24 @@
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        $(document).ready(function() {
-            $('#rotaForm').on('submit', function(event) {
+        $(document).ready(function () {
+            $('#rotaForm').on('submit', function (event) {
                 event.preventDefault();
                 $.ajax({
                     url: '/rota',
                     method: 'POST',
                     data: $(this).serialize(),
-                    success: function(response) {
+                    success: function (response) {
                         $('#map').html(response);
                     },
-                    error: function() {
-                        alert('Erro ao calcular a rota.');
+                    error: function (xhr) {
+                        const mensagem = xhr?.responseJSON?.error || 'Erro ao calcular a rota.';
+                        alert(mensagem);
                     }
                 });
             });
         });
     </script>
 </body>
+
 </html>
